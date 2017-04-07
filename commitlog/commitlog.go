@@ -5,13 +5,17 @@ package commitlog
 import (
 	"encoding/binary"
 	"errors"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/compose/transporter/log"
 )
 
 const (
@@ -21,10 +25,12 @@ const (
 
 var (
 	defaultPath = filepath.Join(os.TempDir(), "transporter")
-	encoding    = binary.BigEndian
+	Encoding    = binary.BigEndian
 
 	// ErrEmptyPath will be returned if the provided path is an empty string
 	ErrEmptyPath = errors.New("path is empty")
+	// ErrSegmentNotFound is returned with no segment is found given the provided offset
+	ErrSegmentNotFound = errors.New("segment not found")
 )
 
 // CommitLog is how the rest of the system will interact with the underlying log segments
@@ -184,6 +190,40 @@ func (c *CommitLog) DeleteAll() error {
 		return err
 	}
 	return os.RemoveAll(c.path)
+}
+
+func (c *CommitLog) NewReader(offset int64) (io.Reader, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	log.With("num_segments", len(c.segments)).
+		With("offset", offset).
+		Infoln("searching segments")
+
+	idx := sort.Search(len(c.segments), func(i int) bool {
+		return c.segments[i].BaseOffset > offset
+	}) - 1
+
+	if idx < 0 {
+		return nil, ErrSegmentNotFound
+	}
+
+	log.With("idx", idx).Infoln("finding offset in segment")
+	// in the event there has been data committed to the segment but no offset for a path,
+	// then we need to create a reader that starts from the very beginning
+	if offset < 0 {
+		return &Reader{commitlog: c, idx: 0, position: 0}, nil
+	}
+
+	position, err := c.segments[idx].findOffsetPosition(uint64(offset))
+	if err != nil {
+		return nil, err
+	}
+
+	return &Reader{
+		commitlog: c,
+		idx:       idx,
+		position:  position,
+	}, nil
 }
 
 func (c *CommitLog) activeSegment() *Segment {

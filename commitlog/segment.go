@@ -2,15 +2,23 @@ package commitlog
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/compose/transporter/log"
 )
 
 const (
 	logNameFormat = "%020d.log"
+)
+
+var (
+	// ErrOffsetNotFound is returned when the requested offset is not in the segment.
+	ErrOffsetNotFound = errors.New("offset not found")
 )
 
 // Segment handles reading and writing to the underlying files on disk.
@@ -65,15 +73,15 @@ func (s *Segment) init() error {
 		if err != nil {
 			return err
 		}
-		s.NextOffset = int64(encoding.Uint64(b.Bytes()[offsetPos:8]))
+		s.NextOffset = int64(Encoding.Uint64(b.Bytes()[offsetPos:8]))
 
 		_, err = io.CopyN(b, s.log, 4)
 		if err != nil {
 			return err
 		}
-		size := int64(encoding.Uint32(b.Bytes()[sizePos:12]))
+		size := int64(Encoding.Uint32(b.Bytes()[sizePos:12]))
 
-		s.Position += size + logEntryHeaderLen
+		s.Position += size + LogEntryHeaderLen
 		s.NextOffset++
 
 		// add 9 to size to include the timestamp and attribute
@@ -115,4 +123,39 @@ func (s *Segment) Close() error {
 	s.Lock()
 	defer s.Unlock()
 	return s.log.Close()
+}
+
+func (s *Segment) findOffsetPosition(offset uint64) (int64, error) {
+	if _, err := s.log.Seek(0, 0); err != nil {
+		return 0, err
+	}
+
+	var position int64
+	for {
+		b := new(bytes.Buffer)
+		// get offset and size
+		_, err := io.CopyN(b, s.log, 8)
+		if err != nil {
+			return position, ErrOffsetNotFound
+		}
+		o := Encoding.Uint64(b.Bytes()[offsetPos:8])
+
+		_, err = io.CopyN(b, s.log, 4)
+		if err != nil {
+			return position, ErrOffsetNotFound
+		}
+		size := int64(Encoding.Uint32(b.Bytes()[sizePos:12]))
+
+		if offset == o {
+			log.With("position", position).Infoln("found offset position")
+			return position, nil
+		}
+		position += size + LogEntryHeaderLen
+
+		// add 9 to size to include the timestamp and attribute
+		_, err = s.log.Seek(size+9, 1)
+		if err != nil {
+			return 0, err
+		}
+	}
 }

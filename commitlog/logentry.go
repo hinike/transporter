@@ -9,7 +9,7 @@ const (
 	sizePos           = 8
 	tsPos             = 12
 	attrPos           = 20
-	logEntryHeaderLen = 21
+	LogEntryHeaderLen = 21
 
 	modeMask = 3
 	opMask   = 28
@@ -33,6 +33,13 @@ func (le LogEntry) ModeOpToByte() byte {
 	return byte(int(le.Mode) | (int(le.Op) << opShift))
 }
 
+func ModeFromBytes(b []byte) Mode {
+	return Mode(b[attrPos] & modeMask)
+}
+func OpFromBytes(b []byte) ops.Op {
+	return ops.Op(b[attrPos] & opMask >> opShift)
+}
+
 // Mode is a representation of where a in the process a reader is with respect to a given namespace.
 type Mode int
 
@@ -48,20 +55,19 @@ func NewLogFromEntry(le LogEntry) Log {
 	keyLen := len(le.Key)
 	valLen := len(le.Value)
 	kvLen := keyLen + valLen + 8
-	l := make([]byte, logEntryHeaderLen+kvLen)
-	// encoding.PutUint64(l[offsetPos:sizePos], offset)
+	l := make([]byte, LogEntryHeaderLen+kvLen)
 
-	encoding.PutUint64(l[tsPos:attrPos], le.Timestamp)
+	Encoding.PutUint64(l[tsPos:attrPos], le.Timestamp)
 
 	l[attrPos] = le.ModeOpToByte()
 
-	kvPosition := logEntryHeaderLen + 4
-	encoding.PutUint32(l[logEntryHeaderLen:kvPosition], uint32(keyLen))
+	kvPosition := LogEntryHeaderLen + 4
+	Encoding.PutUint32(l[LogEntryHeaderLen:kvPosition], uint32(keyLen))
 	copy(l[kvPosition:kvPosition+keyLen], le.Key)
 
-	encoding.PutUint32(l[kvPosition+keyLen:kvPosition+keyLen+4], uint32(valLen))
+	Encoding.PutUint32(l[kvPosition+keyLen:kvPosition+keyLen+4], uint32(valLen))
 	copy(l[kvPosition+keyLen+4:], le.Value)
 
-	encoding.PutUint32(l[sizePos:tsPos], uint32(kvLen))
+	Encoding.PutUint32(l[sizePos:tsPos], uint32(kvLen))
 	return l
 }

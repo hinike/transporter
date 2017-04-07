@@ -32,6 +32,7 @@ func New(path, name string) (*Manager, error) {
 
 	l, err := commitlog.New(
 		commitlog.WithPath(filepath.Join(path, fmt.Sprintf("%s-%s", offsetPrefixDir, name))),
+		commitlog.WithMaxSegmentBytes(1024*1024*1024),
 	)
 	if err != nil {
 		return nil, err
@@ -49,33 +50,35 @@ func New(path, name string) (*Manager, error) {
 func (m *Manager) buildMap() error {
 	var readPosition int64
 	for _, s := range m.log.Segments() {
-		// skip the offsetHeader
-		readPosition += offsetHeaderLen
+		for {
+			// skip the offsetHeader
+			readPosition += offsetHeaderLen
 
-		keyLenBytes := make([]byte, 4)
-		_, err := s.ReadAt(keyLenBytes, readPosition)
-		if err != nil {
-			return err
-		}
-		keyLen := encoding.Uint32(keyLenBytes)
-		readPosition += 4
+			keyLenBytes := make([]byte, 4)
+			_, err := s.ReadAt(keyLenBytes, readPosition)
+			if err != nil {
+				return err
+			}
+			keyLen := encoding.Uint32(keyLenBytes)
+			readPosition += 4
 
-		// now we read the namespace based on the length
-		nsBytes := make([]byte, keyLen)
-		_, err = s.ReadAt(nsBytes, readPosition)
-		if err != nil {
-			return err
+			// now we read the namespace based on the length
+			nsBytes := make([]byte, keyLen)
+			_, err = s.ReadAt(nsBytes, readPosition)
+			if err != nil {
+				return err
+			}
+			// we can add 4 here since we know the size of the value is 8 bytes
+			readPosition += int64(keyLen) + 4
+			// we can cheat here since we know the value will always be the 8-byte offset
+			valBytes := make([]byte, 8)
+			_, err = s.ReadAt(valBytes, readPosition)
+			if err != nil {
+				return err
+			}
+			readPosition += 8
+			m.nsMap[string(nsBytes)] = encoding.Uint64(valBytes)
 		}
-		// we can add 4 here since we know the size of the value is 8 bytes
-		readPosition += int64(keyLen) + 4
-		// we can cheat here since we know the value will always be the 8-byte offset
-		valBytes := make([]byte, 8)
-		_, err = s.ReadAt(valBytes, readPosition)
-		if err != nil {
-			return err
-		}
-		readPosition += 8
-		m.nsMap[string(nsBytes)] = encoding.Uint64(valBytes)
 	}
 	return nil
 }
@@ -105,4 +108,19 @@ func (m *Manager) OffsetMap() map[string]uint64 {
 	m.Lock()
 	defer m.Unlock()
 	return m.nsMap
+}
+
+func (m *Manager) NewestOffset() int64 {
+	m.Lock()
+	defer m.Unlock()
+	if len(m.nsMap) == 0 {
+		return -1
+	}
+	var newestOffset uint64
+	for _, v := range m.nsMap {
+		if newestOffset < v {
+			newestOffset = v
+		}
+	}
+	return int64(newestOffset)
 }

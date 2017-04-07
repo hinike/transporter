@@ -43,7 +43,7 @@ type MockReader struct {
 	MsgCount int
 }
 
-func (r *MockReader) Read(filterFn NsFilterFunc) MessageChanFunc {
+func (r *MockReader) Read(_ map[string]MessageSet, filterFn NsFilterFunc) MessageChanFunc {
 	return func(s Session, done chan struct{}) (chan MessageSet, error) {
 		out := make(chan MessageSet)
 		go func() {
