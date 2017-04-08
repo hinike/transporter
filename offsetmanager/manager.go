@@ -48,39 +48,42 @@ func New(path, name string) (*Manager, error) {
 }
 
 func (m *Manager) buildMap() error {
-	var readPosition int64
+	var lastError error
 	for _, s := range m.log.Segments() {
+		var readPosition int64
 		for {
 			// skip the offsetHeader
 			readPosition += offsetHeaderLen
 
 			keyLenBytes := make([]byte, 4)
-			_, err := s.ReadAt(keyLenBytes, readPosition)
-			if err != nil {
-				return err
+			_, lastError = s.ReadAt(keyLenBytes, readPosition)
+			if lastError != nil && lastError == io.EOF {
+				break
+			} else if lastError != nil {
+				return lastError
 			}
 			keyLen := encoding.Uint32(keyLenBytes)
 			readPosition += 4
 
 			// now we read the namespace based on the length
 			nsBytes := make([]byte, keyLen)
-			_, err = s.ReadAt(nsBytes, readPosition)
-			if err != nil {
-				return err
+			_, lastError = s.ReadAt(nsBytes, readPosition)
+			if lastError != nil {
+				break
 			}
 			// we can add 4 here since we know the size of the value is 8 bytes
 			readPosition += int64(keyLen) + 4
 			// we can cheat here since we know the value will always be the 8-byte offset
 			valBytes := make([]byte, 8)
-			_, err = s.ReadAt(valBytes, readPosition)
-			if err != nil {
-				return err
+			_, lastError = s.ReadAt(valBytes, readPosition)
+			if lastError != nil {
+				break
 			}
 			readPosition += 8
 			m.nsMap[string(nsBytes)] = encoding.Uint64(valBytes)
 		}
 	}
-	return nil
+	return lastError
 }
 
 // CommitOffset verifies it does not contain an offset older than the current offset

@@ -205,6 +205,7 @@ func (n *Node) Start() error {
 				if err != nil {
 					return err
 				}
+				// TODO: move all of the logic below to commitlog.LogEntry
 				header := make([]byte, commitlog.LogEntryHeaderLen)
 				if _, err = r.Read(header); err != nil {
 					return err
@@ -248,10 +249,13 @@ func (n *Node) resume(wg *sync.WaitGroup, logOffset int64) error {
 		wg.Done()
 	}()
 
+	// TODO: pass in reader as argument so we can keep the commitlog.CommitLog only
+	// on the source node
 	r, err := n.clog.NewReader(n.om.NewestOffset())
 	if err != nil {
 		return err
 	}
+	// TODO: move all of the logic below to commitlog.LogEntry
 	for {
 		// read each message one at a time by getting the size and then
 		// the message and send down the pipe
@@ -276,12 +280,13 @@ func (n *Node) resume(wg *sync.WaitGroup, logOffset int64) error {
 		if err != nil {
 			return err
 		}
-		msg := message.From(op, ns, map[string]interface{}(data))
 		// if (offset % 1000) == 0 {
 		// 	percentComplete := (float64(offset) / float64(logOffset)) * 100.0
 		// 	n.l.With("offset", offset).With("log_offset", logOffset).With("percent_complete", percentComplete).Infoln("still resuming...")
 		// }
-		n.pipe.In <- msg
+		n.pipe.In <- message.From(op, ns, map[string]interface{}(data))
+		// TODO: remove this when https://github.com/compose/transporter/issues/327
+		// is implemented
 		n.om.CommitOffset(offsetmanager.Offset{
 			Namespace: ns,
 			Offset:    offset,
@@ -348,6 +353,8 @@ func (n *Node) start(nsMap map[string]client.MessageSet) error {
 		if err != nil {
 			return err
 		}
+		// TODO: remove this when https://github.com/compose/transporter/issues/327
+		// is implemented
 		for _, child := range n.Children {
 			child.om.CommitOffset(offsetmanager.Offset{
 				Namespace: msg.Msg.Namespace(),
@@ -367,10 +374,17 @@ func (n *Node) listen() (err error) {
 	n.l.Infoln("adaptor Listening...")
 	defer n.l.Infoln("adaptor Listen closed...")
 
+	// TODO: keep n.nsFilter here and remove from pipe.Pipe, we can filter
+	// out messages by namespace below in write(), this will allow us to keep
+	// the offsetmanager.Manager contained within here and not need to provide
+	// it to pipe.Pipe for the cases where we need to ack messages that get
+	// filtered out by the namespace filter
 	return n.pipe.Listen(n.write, n.nsFilter)
 }
 
 func (n *Node) write(msg message.Msg) (message.Msg, error) {
+	// TODO: defer func to check if there was an error and if not,
+	// call n.om.CommitOffset()
 	transformedMsg, err := n.applyTransforms(msg)
 	if err != nil {
 		return msg, err

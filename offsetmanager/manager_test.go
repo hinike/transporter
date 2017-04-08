@@ -36,7 +36,7 @@ var managerTests = []struct {
 	{
 		"resume0",
 		"testdata",
-		map[string]uint64{"namespace0": 69, "namespace1": 27, "namespace2": 48},
+		map[string]uint64{"namespace0": 87, "namespace1": 47, "namespace2": 59},
 		nil,
 	},
 }
@@ -95,6 +95,28 @@ func TestApply(t *testing.T) {
 
 	if !reflect.DeepEqual(m.OffsetMap(), expectedMap) {
 		t.Errorf("bad OffsetMap, expected, %+v, got %+v", expectedMap, m.OffsetMap())
+	}
+
+	var expectedNewestOffset uint64
+	for _, v := range expectedMap {
+		if expectedNewestOffset < v {
+			expectedNewestOffset = v
+		}
+	}
+	if !reflect.DeepEqual(m.NewestOffset(), int64(expectedNewestOffset)) {
+		t.Errorf("wrong NewestOffset, expected %d, got %d", expectedNewestOffset, m.NewestOffset())
+	}
+}
+
+func TestEmptyMap(t *testing.T) {
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("managertest%d", rand.Int63()))
+	defer cleanup(path, t)
+	m, err := offsetmanager.New(path, "empty0")
+	if err != nil {
+		t.Fatalf("unexpected New error, %s", err)
+	}
+	if !reflect.DeepEqual(m.NewestOffset(), int64(-1)) {
+		t.Errorf("wrong NewestOffset, expected -1, got %d", m.NewestOffset())
 	}
 }
 

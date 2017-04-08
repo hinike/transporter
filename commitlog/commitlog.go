@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -199,22 +198,31 @@ func (c *CommitLog) NewReader(offset int64) (io.Reader, error) {
 		With("offset", offset).
 		Infoln("searching segments")
 
-	idx := sort.Search(len(c.segments), func(i int) bool {
-		return c.segments[i].BaseOffset > offset
-	}) - 1
-
-	if idx < 0 {
-		return nil, ErrSegmentNotFound
-	}
-
-	log.With("idx", idx).Infoln("finding offset in segment")
 	// in the event there has been data committed to the segment but no offset for a path,
 	// then we need to create a reader that starts from the very beginning
-	if offset < 0 {
+	if offset < 0 && len(c.segments) > 0 {
 		return &Reader{commitlog: c, idx: 0, position: 0}, nil
 	}
 
-	position, err := c.segments[idx].findOffsetPosition(uint64(offset))
+	var idx int
+	for i := 0; i < len(c.segments); i++ {
+		idx = i
+		if (i + 1) != len(c.segments) {
+			lowerOffset := c.segments[i].BaseOffset
+			upperOffset := c.segments[i+1].BaseOffset
+			log.With("lower_offset", lowerOffset).
+				With("upper_offset", upperOffset).
+				With("offset", offset).
+				With("segment", idx).
+				Debugln("checking if offset in segment")
+			if offset >= lowerOffset && offset < upperOffset {
+				break
+			}
+		}
+	}
+
+	log.With("offset", offset).With("segment_index", idx).Debugln("finding offset in segment")
+	position, err := c.segments[idx].FindOffsetPosition(uint64(offset))
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +249,6 @@ func (c *CommitLog) split() error {
 	}
 	c.mu.Lock()
 	c.segments = append(c.segments, segment)
-	// c.activeSegment().Close()
 	c.vActiveSegment.Store(segment)
 	c.mu.Unlock()
 	return nil

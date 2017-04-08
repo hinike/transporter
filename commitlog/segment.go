@@ -125,7 +125,7 @@ func (s *Segment) Close() error {
 	return s.log.Close()
 }
 
-func (s *Segment) findOffsetPosition(offset uint64) (int64, error) {
+func (s *Segment) FindOffsetPosition(offset uint64) (int64, error) {
 	if _, err := s.log.Seek(0, 0); err != nil {
 		return 0, err
 	}
@@ -147,7 +147,7 @@ func (s *Segment) findOffsetPosition(offset uint64) (int64, error) {
 		size := int64(Encoding.Uint32(b.Bytes()[sizePos:12]))
 
 		if offset == o {
-			log.With("position", position).Infoln("found offset position")
+			log.With("position", position).With("offset", o).Infoln("found offset position")
 			return position, nil
 		}
 		position += size + LogEntryHeaderLen

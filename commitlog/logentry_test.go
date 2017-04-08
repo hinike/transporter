@@ -147,6 +147,140 @@ func TestNewLogFromEntry(t *testing.T) {
 	}
 }
 
+var (
+	modeTests = []struct {
+		name         string
+		l            commitlog.Log
+		expectedMode commitlog.Mode
+	}{
+		{
+			"base",
+			commitlog.Log{
+				0, 0, 0, 0, 0, 0, 0, 0, // offset
+				0, 0, 0, 16, // size
+				0, 0, 0, 0, 88, 226, 180, 78, // timestamp
+				0,          // mode
+				0, 0, 0, 3, // key length
+				107, 101, 121, // key
+				0, 0, 0, 5, // value length
+				118, 97, 108, 117, 101, // value
+			},
+			commitlog.Copy,
+		},
+		{
+			"sync",
+			commitlog.Log{
+				0, 0, 0, 0, 0, 0, 0, 0, // offset
+				0, 0, 0, 16, // size
+				0, 0, 0, 0, 88, 226, 180, 78, // timestamp
+				1,          // mode
+				0, 0, 0, 3, // key length
+				107, 101, 121, // key
+				0, 0, 0, 5, // value length
+				118, 97, 108, 117, 101, // value
+			},
+			commitlog.Sync,
+		},
+		{
+			"complete",
+			commitlog.Log{
+				0, 0, 0, 0, 0, 0, 0, 0, // offset
+				0, 0, 0, 16, // size
+				0, 0, 0, 0, 88, 226, 180, 78, // timestamp
+				2,          // mode
+				0, 0, 0, 3, // key length
+				107, 101, 121, // key
+				0, 0, 0, 5, // value length
+				118, 97, 108, 117, 101, // value
+			},
+			commitlog.Complete,
+		},
+		{
+			"mode_with_op",
+			commitlog.Log{
+				0, 0, 0, 0, 0, 0, 0, 0, // offset
+				0, 0, 0, 16, // size
+				0, 0, 0, 0, 88, 226, 180, 78, // timestamp
+				9,          // mode
+				0, 0, 0, 3, // key length
+				107, 101, 121, // key
+				0, 0, 0, 5, // value length
+				118, 97, 108, 117, 101, // value
+			},
+			commitlog.Sync,
+		},
+	}
+)
+
+func TestModeFromBytes(t *testing.T) {
+	for _, mt := range modeTests {
+		actualMode := commitlog.ModeFromBytes(mt.l)
+		if !reflect.DeepEqual(actualMode, mt.expectedMode) {
+			t.Errorf("[%s] wrong Mode, expected %+v, got %+v", mt.name, mt.expectedMode, actualMode)
+		}
+	}
+}
+
+var (
+	opTests = []struct {
+		name       string
+		l          commitlog.Log
+		expectedOp ops.Op
+	}{
+		{
+			"base",
+			commitlog.Log{
+				0, 0, 0, 0, 0, 0, 0, 0, // offset
+				0, 0, 0, 16, // size
+				0, 0, 0, 0, 88, 226, 180, 78, // timestamp
+				0,          // mode
+				0, 0, 0, 3, // key length
+				107, 101, 121, // key
+				0, 0, 0, 5, // value length
+				118, 97, 108, 117, 101, // value
+			},
+			ops.Insert,
+		},
+		{
+			"update",
+			commitlog.Log{
+				0, 0, 0, 0, 0, 0, 0, 0, // offset
+				0, 0, 0, 16, // size
+				0, 0, 0, 0, 88, 226, 180, 78, // timestamp
+				4,          // mode
+				0, 0, 0, 3, // key length
+				107, 101, 121, // key
+				0, 0, 0, 5, // value length
+				118, 97, 108, 117, 101, // value
+			},
+			ops.Update,
+		},
+		{
+			"op_with_mode",
+			commitlog.Log{
+				0, 0, 0, 0, 0, 0, 0, 0, // offset
+				0, 0, 0, 16, // size
+				0, 0, 0, 0, 88, 226, 180, 78, // timestamp
+				9,          // mode
+				0, 0, 0, 3, // key length
+				107, 101, 121, // key
+				0, 0, 0, 5, // value length
+				118, 97, 108, 117, 101, // value
+			},
+			ops.Delete,
+		},
+	}
+)
+
+func TestOpFromBytes(t *testing.T) {
+	for _, ot := range opTests {
+		actualOp := commitlog.OpFromBytes(ot.l)
+		if !reflect.DeepEqual(actualOp, ot.expectedOp) {
+			t.Errorf("[%s] wrong Op, expected %+v, got %+v", ot.name, ot.expectedOp, actualOp)
+		}
+	}
+}
+
 func BenchmarkNewLogFromEntry(b *testing.B) {
 	le := entryTests[0].le
 	b.ResetTimer()
