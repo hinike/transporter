@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"sync"
@@ -56,6 +57,7 @@ type Node struct {
 	om       *offsetmanager.Manager
 }
 
+// Transform defines the struct for including a native function in the pipeline.
 type Transform struct {
 	Name     string
 	Fn       function.Function
@@ -90,6 +92,7 @@ func NewNode(name, kind, ns string, a adaptor.Adaptor, parent *Node) (*Node, err
 			return nil, err
 		}
 		n.clog, _ = commitlog.New(
+			// TODO: path and MaxSegmentBytes need to be provided
 			commitlog.WithPath("/tmp/transporter"),
 			commitlog.WithMaxSegmentBytes(1024*1024*1024),
 		)
@@ -98,7 +101,7 @@ func NewNode(name, kind, ns string, a adaptor.Adaptor, parent *Node) (*Node, err
 		// TODO: remove path param
 		n.pipe = pipe.NewPipe(parent.pipe, "")
 		parent.Children = append(parent.Children, n)
-		n.clog = parent.clog
+		// TODO: path needs to be provided
 		n.om, _ = offsetmanager.New("/tmp/transporter", n.Name)
 		n.writer, err = a.Writer(n.done, &n.wg)
 		if err != nil {
@@ -109,7 +112,6 @@ func NewNode(name, kind, ns string, a adaptor.Adaptor, parent *Node) (*Node, err
 	return n, nil
 }
 
-// String
 func (n *Node) String() string {
 	var (
 		s, prefix string
@@ -171,7 +173,7 @@ func (n *Node) Start() error {
 	}
 
 	if n.Parent == nil {
-		nsMap := make(map[string]client.MessageSet)
+		msgMap := make(map[string]client.MessageSet)
 		nsOffsetMap := make(map[string]uint64)
 		// TODO: not entirely sure about this logic check...
 		if n.clog.OldestOffset() != n.clog.NewestOffset() {
@@ -182,14 +184,18 @@ func (n *Node) Start() error {
 			for _, child := range n.Children {
 				n.l.With("name", child.Name).Infof("offsetMap: %+v", child.om.OffsetMap())
 				if child.om.NewestOffset() < (n.clog.NewestOffset() - 1) {
+					r, err := n.clog.NewReader(n.om.NewestOffset())
+					if err != nil {
+						return err
+					}
 					wg.Add(1)
-					go func() {
+					go func(r io.Reader) {
 						// we subtract 1 from NewestOffset() because we only need to catch up
 						// to the last entry in the log
-						if err := child.resume(&wg, n.clog.NewestOffset()-1); err != nil {
+						if err := child.resume(&wg, n.clog.NewestOffset()-1, r); err != nil {
 							n.l.Errorln(err)
 						}
-					}()
+					}(r)
 				}
 
 				// compute a map of the oldest offset for every namespace from each child
@@ -205,22 +211,16 @@ func (n *Node) Start() error {
 				if err != nil {
 					return err
 				}
-				// TODO: move all of the logic below to commitlog.LogEntry
-				header := make([]byte, commitlog.LogEntryHeaderLen)
-				if _, err = r.Read(header); err != nil {
+				_, size, ts, mode, op, err := commitlog.ReadHeader(r)
+				if err != nil {
 					return err
 				}
-				size := commitlog.Encoding.Uint32(header[8:12])
-				ts := commitlog.Encoding.Uint64(header[12:20])
-				op := commitlog.OpFromBytes(header)
-				mode := commitlog.ModeFromBytes(header)
-				kvBytes := make([]byte, size)
-				if _, err = r.Read(kvBytes); err != nil {
+				_, val, err := commitlog.ReadKeyValue(size, r)
+				if err != nil {
 					return err
 				}
-				keyLen := len(ns) + 8
 				d := make(map[string]interface{})
-				if err := json.Unmarshal(kvBytes[keyLen:], &d); err != nil {
+				if err := json.Unmarshal(val, &d); err != nil {
 					return err
 				}
 				data, err := mejson.Unmarshal(d)
@@ -228,52 +228,40 @@ func (n *Node) Start() error {
 					return err
 				}
 				msg := message.From(op, ns, map[string]interface{}(data))
-				nsMap[ns] = client.MessageSet{
+				msgMap[ns] = client.MessageSet{
 					Msg:       msg,
 					Timestamp: int64(ts),
 					Mode:      mode,
 				}
 			}
 		}
-		n.l.Infof("starting with metadata %+v", nsMap)
-		return n.start(nsMap)
+		n.l.Infof("starting with metadata %+v", msgMap)
+		return n.start(msgMap)
 	}
 
 	return n.listen()
 }
 
-func (n *Node) resume(wg *sync.WaitGroup, logOffset int64) error {
+func (n *Node) resume(wg *sync.WaitGroup, logOffset int64, r io.Reader) error {
 	n.l.Infoln("adaptor Resuming...")
 	defer func() {
 		n.l.Infoln("adaptor Resume complete")
 		wg.Done()
 	}()
 
-	// TODO: pass in reader as argument so we can keep the commitlog.CommitLog only
-	// on the source node
-	r, err := n.clog.NewReader(n.om.NewestOffset())
-	if err != nil {
-		return err
-	}
-	// TODO: move all of the logic below to commitlog.LogEntry
 	for {
 		// read each message one at a time by getting the size and then
 		// the message and send down the pipe
-		header := make([]byte, commitlog.LogEntryHeaderLen)
-		if _, err = r.Read(header); err != nil {
+		offset, size, _, _, op, err := commitlog.ReadHeader(r)
+		if err != nil {
 			return err
 		}
-		offset := commitlog.Encoding.Uint64(header[0:8])
-		size := commitlog.Encoding.Uint32(header[8:12])
-		op := commitlog.OpFromBytes(header)
-		kvBytes := make([]byte, size)
-		if _, err = r.Read(kvBytes); err != nil {
+		ns, val, err := commitlog.ReadKeyValue(size, r)
+		if err != nil {
 			return err
 		}
-		keyLen := commitlog.Encoding.Uint32(kvBytes[0:4])
-		ns := string(kvBytes[4 : keyLen+4])
 		d := make(map[string]interface{})
-		if err := json.Unmarshal(kvBytes[keyLen+8:], &d); err != nil {
+		if err := json.Unmarshal(val, &d); err != nil {
 			return err
 		}
 		data, err := mejson.Unmarshal(d)
@@ -284,11 +272,11 @@ func (n *Node) resume(wg *sync.WaitGroup, logOffset int64) error {
 		// 	percentComplete := (float64(offset) / float64(logOffset)) * 100.0
 		// 	n.l.With("offset", offset).With("log_offset", logOffset).With("percent_complete", percentComplete).Infoln("still resuming...")
 		// }
-		n.pipe.In <- message.From(op, ns, map[string]interface{}(data))
+		n.pipe.In <- message.From(op, string(ns), map[string]interface{}(data))
 		// TODO: remove this when https://github.com/compose/transporter/issues/327
 		// is implemented
 		n.om.CommitOffset(offsetmanager.Offset{
-			Namespace: ns,
+			Namespace: string(ns),
 			Offset:    offset,
 			Timestamp: time.Now().Unix(),
 		})

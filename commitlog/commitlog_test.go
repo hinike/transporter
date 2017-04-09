@@ -248,7 +248,7 @@ func TestNewReader(t *testing.T) {
 			t.Errorf("[%s] unexpected NewReader error, expected %s, got %s", rt.name, rt.expectedErr, err)
 		}
 		if rt.expectedErr == nil && err == nil {
-			header := make([]byte, commitlog.LogEntryHeaderLen)
+			header := make([]byte, 21)
 			_, err = r.Read(header)
 			if err != nil {
 				t.Errorf("[%s] unexpected Read error, %s", rt.name, err)

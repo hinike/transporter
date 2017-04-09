@@ -68,7 +68,7 @@ func TestRead(t *testing.T) {
 			t.Fatalf("[%s] unexpected NewReader error, %s", rt.name, err)
 		}
 		for {
-			header := make([]byte, commitlog.LogEntryHeaderLen)
+			header := make([]byte, 21)
 			if _, err := r.Read(header); err != nil {
 				if err == io.EOF {
 					break

@@ -81,7 +81,7 @@ func (s *Segment) init() error {
 		}
 		size := int64(Encoding.Uint32(b.Bytes()[sizePos:12]))
 
-		s.Position += size + LogEntryHeaderLen
+		s.Position += size + logEntryHeaderLen
 		s.NextOffset++
 
 		// add 9 to size to include the timestamp and attribute
@@ -150,7 +150,7 @@ func (s *Segment) FindOffsetPosition(offset uint64) (int64, error) {
 			log.With("position", position).With("offset", o).Infoln("found offset position")
 			return position, nil
 		}
-		position += size + LogEntryHeaderLen
+		position += size + logEntryHeaderLen
 
 		// add 9 to size to include the timestamp and attribute
 		_, err = s.log.Seek(size+9, 1)
