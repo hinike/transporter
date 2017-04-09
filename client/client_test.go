@@ -38,7 +38,7 @@ func TestRead(t *testing.T) {
 	c := client.Mock{}
 	s, _ := c.Connect()
 	r := client.MockReader{MsgCount: testMsgCount}
-	readFunc := r.Read(func(string) bool { return true })
+	readFunc := r.Read(map[string]client.MessageSet{}, func(string) bool { return true })
 	msgChan, err := readFunc(s, nil)
 	if err != nil {
 		t.Fatalf("unexpected readFunc error, %s", err)
