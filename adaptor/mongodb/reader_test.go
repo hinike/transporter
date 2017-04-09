@@ -33,7 +33,7 @@ func TestRead(t *testing.T) {
 	}
 
 	reader := newReader(false, DefaultCollectionFilter)
-	readFunc := reader.Read(filterFunc)
+	readFunc := reader.Read(map[string]client.MessageSet{}, filterFunc)
 	done := make(chan struct{})
 	c, _ := NewClient(WithURI(fmt.Sprintf("mongodb://127.0.0.1:27017/%s", readerTestData.DB)))
 	s, err := c.Connect()
@@ -69,7 +69,7 @@ func TestFilteredRead(t *testing.T) {
 		defaultSession.mgoSession.DB(filteredReaderTestData.DB).C(filteredReaderTestData.C).Insert(bson.M{"_id": i, "i": i})
 	}
 
-	readFunc := reader.Read(filterFunc)
+	readFunc := reader.Read(map[string]client.MessageSet{}, filterFunc)
 	done := make(chan struct{})
 	c, _ := NewClient(WithURI(fmt.Sprintf("mongodb://127.0.0.1:27017/%s", filteredReaderTestData.DB)))
 	s, err := c.Connect()
@@ -98,7 +98,7 @@ func TestCancelledRead(t *testing.T) {
 	}
 
 	reader := newReader(false, DefaultCollectionFilter)
-	readFunc := reader.Read(filterFunc)
+	readFunc := reader.Read(map[string]client.MessageSet{}, filterFunc)
 	done := make(chan struct{})
 	c, _ := NewClient(WithURI(fmt.Sprintf("mongodb://127.0.0.1:27017/%s", cancelledReaderTestData.DB)))
 	s, err := c.Connect()
@@ -154,7 +154,7 @@ func TestReadRestart(t *testing.T) {
 	}
 
 	reader := newReader(false, DefaultCollectionFilter)
-	readFunc := reader.Read(filterFunc)
+	readFunc := reader.Read(map[string]client.MessageSet{}, filterFunc)
 	done := make(chan struct{})
 	msgChan, err := readFunc(s, done)
 	if err != nil {
@@ -240,7 +240,7 @@ func TestTail(t *testing.T) {
 	tail := newReader(true, DefaultCollectionFilter)
 
 	time.Sleep(1 * time.Second)
-	tailFunc := tail.Read(func(c string) bool {
+	tailFunc := tail.Read(map[string]client.MessageSet{}, func(c string) bool {
 		if strings.HasPrefix(c, "system.") {
 			return false
 		} else if c == "skip" {

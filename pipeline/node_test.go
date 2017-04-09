@@ -8,9 +8,11 @@ import (
 
 	"github.com/compose/transporter/adaptor"
 	"github.com/compose/transporter/client"
+	"github.com/compose/transporter/commitlog"
 	"github.com/compose/transporter/function"
 	"github.com/compose/transporter/message"
 	"github.com/compose/transporter/message/ops"
+	"github.com/compose/transporter/offsetmanager"
 	"github.com/compose/transporter/pipe"
 )
 
@@ -148,6 +150,9 @@ func (s *SkipFunc) Apply(msg message.Msg) (message.Msg, error) {
 }
 
 var (
+	om, _   = offsetmanager.New("/tmp", "starter/stopper")
+	clog, _ = commitlog.New()
+
 	stopTests = []struct {
 		node       *Node
 		msgCount   int
@@ -164,11 +169,13 @@ var (
 						Type:     "stopWriter",
 						nsFilter: DefaultNS,
 						done:     make(chan struct{}),
+						om:       om,
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
+				clog:   clog,
 			},
 			10,
 			0,
@@ -185,11 +192,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &function.Mock{}, DefaultNS}},
+						om:         om,
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
+				clog:   clog,
 			},
 			10,
 			10,
@@ -206,11 +215,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &function.Mock{}, regexp.MustCompile("blah")}},
+						om:         om,
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
+				clog:   clog,
 			},
 			10,
 			0,
@@ -227,11 +238,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &function.Mock{Err: errors.New("apply failed")}, DefaultNS}},
+						om:         om,
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
+				clog:   clog,
 			},
 			0,
 			1,
@@ -248,11 +261,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &SkipFunc{}, DefaultNS}},
+						om:         om,
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
+				clog:   clog,
 			},
 			0,
 			10,
@@ -269,11 +284,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &SkipFunc{UsingOp: true}, DefaultNS}},
+						om:         om,
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
+				clog:   clog,
 			},
 			0,
 			10,
