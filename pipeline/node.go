@@ -157,47 +157,6 @@ func WithOffsetManager(name, dataDir string) OptionFunc {
 	}
 }
 
-// NewNode creates a new Node struct
-func NewNode(name, kind, ns string, a adaptor.Adaptor, parent *Node) (*Node, error) {
-	compiledNs, err := regexp.Compile(strings.Trim(ns, "/"))
-	if err != nil {
-		return nil, err
-	}
-	n := &Node{
-		Name:       name,
-		Type:       kind,
-		nsFilter:   compiledNs,
-		Children:   make([]*Node, 0),
-		Transforms: make([]*Transform, 0),
-		done:       make(chan struct{}),
-	}
-
-	n.c, err = a.Client()
-	if err != nil {
-		return nil, err
-	}
-
-	if parent == nil {
-		// TODO: remove path param
-		n.pipe = pipe.NewPipe(nil, "")
-		n.reader, err = a.Reader()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		n.Parent = parent
-		// TODO: remove path param
-		n.pipe = pipe.NewPipe(parent.pipe, "")
-		parent.Children = append(parent.Children, n)
-		n.writer, err = a.Writer(n.done, &n.wg)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return n, nil
-}
-
 func (n *Node) String() string {
 	var (
 		s, prefix string
@@ -231,8 +190,10 @@ func (n *Node) depth() int {
 
 // Path returns a string representation of the names of all the node's parents concatenated with "/"  used in metrics
 // eg. for the following tree
-// source := transporter.NewNode("name1", "mongo", adaptor.Adaptor, nil)
-// 	sink1 := transporter.NewNode("sink1", "file", adaptor.Adaptor, source)
+// source := pipeline.NewNodeWithOptions("name1", "mongo", "/.*/")
+// sink1 := pipeline.NewNodeWithOptions("sink1", "file", "/.*/",
+//   pipeline.WithParent(source),
+// )
 // 'source' will have a Path of 'name1', and 'sink1' will have a path of 'name1/sink1'
 func (n *Node) Path() string {
 	if n.Parent == nil {
