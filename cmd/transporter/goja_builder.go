@@ -159,6 +159,7 @@ func (t *Transporter) Source(call goja.FunctionCall) goja.Value {
 		name, a.name, namespace,
 		pipeline.WithClient(a.a),
 		pipeline.WithReader(a.a),
+		pipeline.WithCommitLog("/tmp/transporter", 1024*1024*1024),
 	)
 	if err != nil {
 		panic(err)
@@ -201,6 +202,7 @@ func (n *Node) Save(call goja.FunctionCall) goja.Value {
 		pipeline.WithParent(n.parent),
 		pipeline.WithClient(a.a),
 		pipeline.WithWriter(a.a),
+		pipeline.WithOffsetManager(name, "/tmp/transporter"),
 	)
 	if err != nil {
 		panic(err)
