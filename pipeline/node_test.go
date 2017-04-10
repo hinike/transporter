@@ -2,9 +2,14 @@ package pipeline
 
 import (
 	"errors"
+	"fmt"
+	"math/rand"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/compose/transporter/adaptor"
 	"github.com/compose/transporter/client"
@@ -149,10 +154,23 @@ func (s *SkipFunc) Apply(msg message.Msg) (message.Msg, error) {
 	return nil, nil
 }
 
-var (
-	om, _   = offsetmanager.New("/tmp", "starter/stopper")
-	clog, _ = commitlog.New()
+func scratchCommitLog() *commitlog.CommitLog {
+	rand.Seed(time.Now().Unix())
+	dataDir := filepath.Join(os.TempDir(), fmt.Sprintf("nodetest%d", rand.Int31()))
+	os.MkdirAll(dataDir, 0777)
+	c, _ := commitlog.New(commitlog.WithPath(dataDir))
+	return c
+}
 
+func scratchOffsetManager() *offsetmanager.Manager {
+	rand.Seed(time.Now().Unix())
+	dataDir := filepath.Join(os.TempDir(), fmt.Sprintf("nodeomtest%d", rand.Int31()))
+	os.MkdirAll(dataDir, 0777)
+	o, _ := offsetmanager.New(dataDir, "starter/stopper")
+	return o
+}
+
+var (
 	stopTests = []struct {
 		node       *Node
 		msgCount   int
@@ -169,13 +187,13 @@ var (
 						Type:     "stopWriter",
 						nsFilter: DefaultNS,
 						done:     make(chan struct{}),
-						om:       om,
+						om:       scratchOffsetManager(),
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
-				clog:   clog,
+				clog:   scratchCommitLog(),
 			},
 			10,
 			0,
@@ -192,13 +210,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &function.Mock{}, DefaultNS}},
-						om:         om,
+						om:         scratchOffsetManager(),
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
-				clog:   clog,
+				clog:   scratchCommitLog(),
 			},
 			10,
 			10,
@@ -215,13 +233,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &function.Mock{}, regexp.MustCompile("blah")}},
-						om:         om,
+						om:         scratchOffsetManager(),
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
-				clog:   clog,
+				clog:   scratchCommitLog(),
 			},
 			10,
 			0,
@@ -238,13 +256,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &function.Mock{Err: errors.New("apply failed")}, DefaultNS}},
-						om:         om,
+						om:         scratchOffsetManager(),
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
-				clog:   clog,
+				clog:   scratchCommitLog(),
 			},
 			0,
 			1,
@@ -261,13 +279,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &SkipFunc{}, DefaultNS}},
-						om:         om,
+						om:         scratchOffsetManager(),
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
-				clog:   clog,
+				clog:   scratchCommitLog(),
 			},
 			0,
 			10,
@@ -284,13 +302,13 @@ var (
 						nsFilter:   DefaultNS,
 						done:       make(chan struct{}),
 						Transforms: []*Transform{&Transform{"mock", &SkipFunc{UsingOp: true}, DefaultNS}},
-						om:         om,
+						om:         scratchOffsetManager(),
 					},
 				},
 				Parent: nil,
 				done:   make(chan struct{}),
 				pipe:   pipe.NewPipe(nil, "starter"),
-				clog:   clog,
+				clog:   scratchCommitLog(),
 			},
 			0,
 			10,

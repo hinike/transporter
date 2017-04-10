@@ -28,21 +28,18 @@ import (
 	"github.com/compose/transporter/pipe"
 )
 
+// OptionFunc is a function that configures a Node.
+// It is used in NewNodeWithOptions.
+type OptionFunc func(*Node) error
+
 // A Node is the basic building blocks of transporter pipelines.
 // Nodes are constructed in a tree, with the first node broadcasting
 // data to each of it's children.
-// Node tree's can be constructed as follows:
-// 	source := transporter.NewNode("name1", "mongo", adaptor.Config{"uri": "mongodb://localhost/boom", "namespace": "boom.foo", "debug": true})
-// 	sink1 := transporter.NewNode("foofile", "file", adaptor.Config{"uri": "stdout://"})
-// 	sink2 := transporter.NewNode("foofile2", "file", adaptor.Config{"uri": "stdout://"})
-// 	source.Add(sink1)
-// 	source.Add(sink2)
-//
 type Node struct {
-	Name       string  `json:"name"`     // the name of this node
-	Type       string  `json:"type"`     // the node's type, used to create the adaptorementation
-	Children   []*Node `json:"children"` // the nodes are set up as a tree, this is an array of this nodes children
-	Parent     *Node   `json:"parent"`   // this node's parent node, if this is nil, this is a 'source' node
+	Name       string
+	Type       string
+	Children   []*Node
+	Parent     *Node
 	Transforms []*Transform
 
 	nsFilter *regexp.Regexp
@@ -62,6 +59,102 @@ type Transform struct {
 	Name     string
 	Fn       function.Function
 	NsFilter *regexp.Regexp
+}
+
+// NewNodeWithOptions initializes a Node with the required parameters and then applies
+// each OptionFunc provided.
+func NewNodeWithOptions(name, kind, ns string, options ...OptionFunc) (*Node, error) {
+	compiledNs, err := regexp.Compile(strings.Trim(ns, "/"))
+	if err != nil {
+		return nil, err
+	}
+	n := &Node{
+		Name:       name,
+		Type:       kind,
+		nsFilter:   compiledNs,
+		pipe:       pipe.NewPipe(nil, ""),
+		Children:   make([]*Node, 0),
+		Transforms: make([]*Transform, 0),
+		done:       make(chan struct{}),
+		c:          &client.Mock{},
+		reader:     &client.MockReader{},
+		writer:     &client.MockWriter{},
+	}
+	// Run the options on it
+	for _, option := range options {
+		if err := option(n); err != nil {
+			return nil, err
+		}
+	}
+	return n, nil
+}
+
+// WithClient sets the client.Client to be used for providing a client.Session to the
+// client.Reader/Writer..
+func WithClient(a adaptor.Adaptor) OptionFunc {
+	return func(n *Node) error {
+		cli, err := a.Client()
+		n.c = cli
+		return err
+	}
+}
+
+// WithReader sets the client.Reader to be used to source data from.
+func WithReader(a adaptor.Adaptor) OptionFunc {
+	return func(n *Node) error {
+		r, err := a.Reader()
+		n.reader = r
+		return err
+	}
+}
+
+// WithWriter sets the client.Writer to be used to send data to.
+func WithWriter(a adaptor.Adaptor) OptionFunc {
+	return func(n *Node) error {
+		w, err := a.Writer(n.done, &n.wg)
+		n.writer = w
+		return err
+	}
+}
+
+// WithParent sets the parent node and reconfigures the pipe.
+func WithParent(parent *Node) OptionFunc {
+	return func(n *Node) error {
+		n.Parent = parent
+		// TODO: remove path param
+		n.pipe = pipe.NewPipe(parent.pipe, "")
+		parent.Children = append(parent.Children, n)
+		return nil
+	}
+}
+
+// WithTransforms adds the provided transforms to be applied in the pipeline.
+func WithTransforms(t []*Transform) OptionFunc {
+	return func(n *Node) error {
+		n.Transforms = t
+		return nil
+	}
+}
+
+// WithCommitLog configures a CommitLog for the reader to persist messages.
+func WithCommitLog(dataDir string, maxBytes int) OptionFunc {
+	return func(n *Node) error {
+		clog, err := commitlog.New(
+			commitlog.WithPath(dataDir),
+			commitlog.WithMaxSegmentBytes(int64(maxBytes)),
+		)
+		n.clog = clog
+		return err
+	}
+}
+
+// WithOffsetManager configures an offsetmanager.Manager to ack messages.
+func WithOffsetManager(name, dataDir string) OptionFunc {
+	return func(n *Node) error {
+		om, err := offsetmanager.New(dataDir, name)
+		n.om = om
+		return err
+	}
 }
 
 // NewNode creates a new Node struct
@@ -91,18 +184,11 @@ func NewNode(name, kind, ns string, a adaptor.Adaptor, parent *Node) (*Node, err
 		if err != nil {
 			return nil, err
 		}
-		n.clog, _ = commitlog.New(
-			// TODO: path and MaxSegmentBytes need to be provided
-			commitlog.WithPath("/tmp/transporter"),
-			commitlog.WithMaxSegmentBytes(1024*1024*1024),
-		)
 	} else {
 		n.Parent = parent
 		// TODO: remove path param
 		n.pipe = pipe.NewPipe(parent.pipe, "")
 		parent.Children = append(parent.Children, n)
-		// TODO: path needs to be provided
-		n.om, _ = offsetmanager.New("/tmp/transporter", n.Name)
 		n.writer, err = a.Writer(n.done, &n.wg)
 		if err != nil {
 			return nil, err
@@ -145,9 +231,8 @@ func (n *Node) depth() int {
 
 // Path returns a string representation of the names of all the node's parents concatenated with "/"  used in metrics
 // eg. for the following tree
-// source := transporter.NewNode("name1", "mongo", adaptor.Config{"uri": "mongodb://localhost/boom", "namespace": "boom.foo", "debug": true})
-// 	sink1 := transporter.NewNode("foofile", "file", adaptor.Config{"uri": "stdout://"})
-// 	source.Add(sink1)
+// source := transporter.NewNode("name1", "mongo", adaptor.Adaptor, nil)
+// 	sink1 := transporter.NewNode("sink1", "file", adaptor.Adaptor, source)
 // 'source' will have a Path of 'name1', and 'sink1' will have a path of 'name1/sink1'
 func (n *Node) Path() string {
 	if n.Parent == nil {
@@ -168,7 +253,9 @@ func (n *Node) Start() error {
 	for _, child := range n.Children {
 		go func(node *Node) {
 			node.l = log.With("name", node.Name).With("type", node.Type).With("path", node.Path())
-			node.Start()
+			if err := node.Start(); err != nil {
+				node.l.Errorln(err)
+			}
 		}(child)
 	}
 
@@ -184,7 +271,7 @@ func (n *Node) Start() error {
 			for _, child := range n.Children {
 				n.l.With("name", child.Name).Infof("offsetMap: %+v", child.om.OffsetMap())
 				if child.om.NewestOffset() < (n.clog.NewestOffset() - 1) {
-					r, err := n.clog.NewReader(n.om.NewestOffset())
+					r, err := n.clog.NewReader(child.om.NewestOffset())
 					if err != nil {
 						return err
 					}
@@ -404,7 +491,7 @@ func (n *Node) applyTransforms(msg message.Msg) (message.Msg, error) {
 	if msg.OP() != ops.Command {
 		for _, transform := range n.Transforms {
 			if !transform.NsFilter.MatchString(msg.Namespace()) {
-				n.l.With("transform", transform.Name).With("ns", msg.Namespace()).Infoln("filtered message")
+				n.l.With("transform", transform.Name).With("ns", msg.Namespace()).Debugln("filtered message")
 				continue
 			}
 			m, err := transform.Fn.Apply(msg)
@@ -412,12 +499,12 @@ func (n *Node) applyTransforms(msg message.Msg) (message.Msg, error) {
 				n.l.Errorf("transform function error, %s", err)
 				return nil, err
 			} else if m == nil {
-				n.l.With("transform", transform.Name).Infoln("returned nil message, skipping")
+				n.l.With("transform", transform.Name).Debugln("returned nil message, skipping")
 				return nil, nil
 			}
 			msg = m
 			if msg.OP() == ops.Skip {
-				n.l.With("transform", transform.Name).With("op", msg.OP()).Infoln("skipping message")
+				n.l.With("transform", transform.Name).With("op", msg.OP()).Debugln("skipping message")
 				return nil, nil
 			}
 		}
